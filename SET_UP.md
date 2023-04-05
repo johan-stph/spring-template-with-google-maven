@@ -14,5 +14,14 @@ This guide will walk you through deploying a Spring application to Google Cloud 
 8. Now select the region and zone where the database will be deployed. The region and zone should be the same as the region and zone where the application will be deployed. For optimal performance, the region and zone should be the same as the region and zone where the user is located. https://gcping.com/
 9. For this demo example make sure to select in each menu the cheapest option. Scaling the database up or down is possible at any time.
 10. Make sure you give the database a public IP address. To manage the database from outside GCP.
-11. Install the google cloud sdk https://cloud.google.com/sdk/docs/install
-12. 
+11. Install the Google cloud sdk https://cloud.google.com/sdk/docs/install
+12. Follow the instructions to authenticate the sdk with your Google account.
+13. (Optional) You have the option to install the cloud sql proxy. This is not necessary, but it will make it easier to connect to the database from outside GCP. https://cloud.google.com/sql/docs/postgres/connect-auth-proxy
+    1. ```curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.1.2/cloud-sql-proxy.linux.amd64```
+    2. ```chmod +x cloud-sql-proxy```
+    3. ```./cloud_sql_proxy -instances={TODO: Insert Instance Name}=tcp:0.0.0.0:5432```
+    4. Now you can connect to the database locally on port 5432.
+
+
+### Spring Setup
+1. 
