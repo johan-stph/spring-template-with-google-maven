@@ -3,3 +3,5 @@
 ## How to use this template
 
 1. Follow the Steps in SET_UP.md to set up your project.
+
+2. If some things are unclear, you can create an issue or contact me directly.
