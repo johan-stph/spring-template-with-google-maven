@@ -1,0 +1,139 @@
+
+# Overview:
+#
+# 1. Authenticate to Google Cloud
+# 2. Authenticate Docker to Artifact Registry
+# 3. Build a docker container
+# 4. Publish it to Google Artifact Registry
+# 5. Deploy it to Cloud Run
+#
+# To configure this workflow:
+#
+# 1. Ensure the required Google Cloud APIs are enabled:
+#
+#    Cloud Run            run.googleapis.com
+#    Artifact Registry    artifactregistry.googleapis.com
+#
+# 2. Create and configure Workload Identity Federation for GitHub (https://github.com/google-github-actions/auth#setting-up-workload-identity-federation)
+#
+# 3. Ensure the required IAM permissions are granted
+#
+#    Cloud Run
+#      roles/run.admin
+#      roles/iam.serviceAccountUser     (to act as the Cloud Run runtime service account)
+#
+#    Artifact Registry
+#      roles/artifactregistry.admin     (project or repository level)
+#
+#    NOTE: You should always follow the principle of least privilege when assigning IAM roles
+# 4. Create an Artifact Registry repository with a name, docker selected, and a location the name will be used later in the workflow
+#
+# 5. Create GitHub secrets for WIF_PROVIDER and WIF_SERVICE_ACCOUNT
+#
+# 6. Copy the Dockerfile from this repository to your project
+
+#
+# For more support on how to run this workflow, please visit https://github.com/marketplace/actions/deploy-to-cloud-run
+#
+# Further reading:
+#   Cloud Run IAM permissions                 - https://cloud.google.com/run/docs/deploying
+#   Artifact Registry IAM permissions         - https://cloud.google.com/artifact-registry/docs/access-control#roles
+#   Container Registry vs Artifact Registry   - https://cloud.google.com/blog/products/application-development/understanding-artifact-registry-vs-container-registry
+#   Principle of least privilege              - https://cloud.google.com/blog/products/identity-security/dont-get-pwned-practicing-the-principle-of-least-privilege
+
+name: Build and Deploy to Cloud Run
+
+on:
+  #push: - TODO: Uncomment this to enable the workflow on push to main in this configuration a manual trigger is required
+   # branches:
+    #  - "main"
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: example-project-id # TODO: Change this to your project ID
+  GAR_LOCATION: your_location # TODO: Change this to your Artifact Registry location (e.g. us-central1)
+  REPOSITORY: your_repository # TODO: Change this to your Artifact Registry repository
+  SERVICE: your_service # TODO: Change this to your Cloud Run service name
+  REGION: your_region # TODO: Change this to your Cloud Run region
+
+jobs:
+  deploy:
+    # Add 'id-token' with the intended permissions for workload identity federation
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          # Todo: Change this to the version of Java your project uses
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build with Maven
+        # TODO: Change this to your build command if you are not using Maven make sure that a .jar file is created in the target directory
+        # TODO: if the build output is not a .jar file you will need to change the Dockerfile to use the correct file
+        run: mvn clean install -DskipTests --file pom.xml
+
+      - name: Google Auth
+        id: auth
+        uses: 'google-github-actions/auth@v0'
+        with:
+          token_format: 'access_token'
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account:  ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      # NOTE: Alternative option - authentication via credentials json
+      # - name: Google Auth
+      #   id: auth
+      #   uses: 'google-github-actions/auth@v0'
+      #   with:
+      #     credentials_json: '${{ secrets.GCP_CREDENTIALS }}''
+      # BEGIN - Docker auth and build (NOTE: If you already have a container image, these Docker steps can be omitted)
+
+      # Authenticate Docker to Google Cloud Artifact Registry
+      - name: Docker Auth
+        id: docker-auth
+        uses: 'docker/login-action@v1'
+        with:
+          username: 'oauth2accesstoken'
+          password: '${{ steps.auth.outputs.access_token }}'
+          registry: '${{ env.GAR_LOCATION }}-docker.pkg.dev'
+
+      - name: Build and Push Container
+        run: |-
+          docker build -t "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }}" ./
+          docker push "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }}"
+
+      # END - Docker auth and build
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        # Todo: Add or remove any secrets that your docker image requires to run the values are added through the Google Cloud Secrets Manager
+        # just enable the Secrets Manager API and create a secret with the name of the environment variable you want to use
+        # use :latest if the latest version of the secret should be used or :n if the n-th version should be used
+        # The DB_CLOUD_SQL_INSTANCE secret should be the name of the Cloud SQL instance in the format project-id:region:instance-name you can get it on the SQL instance page
+        # DB_DATABASE is the name of the database in the Cloud SQL instance (postgres) is automatically created see the setup.md for more information
+        run: |-
+          gcloud run deploy ${{ env.SERVICE }} \
+            --image ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ github.sha }} \
+            --quiet \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --project ${{ env.PROJECT_ID }} \
+            --format json \
+            --update-env-vars SERVICE_NAME="Recipes Service" \
+            --update-secrets DB_DATABASE=DB_DATABASE:latest \
+            --update-secrets DB_USERNAME=DB_USERNAME:1 \
+            --update-secrets DB_PASSWORD=DB_PASSWORD:latest \
+            --update-secrets DB_CLOUD_SQL_INSTANCE=DB_CLOUD_SQL_INSTANCE:1 \
+            --allow-unauthenticated
+
+      # If required, use the Cloud Run url output in later steps
+      - name: Show Output
+        run: echo ${{ steps.deploy.outputs.url }}
